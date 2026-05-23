@@ -72,10 +72,14 @@ if (needsOnboard) {
 
 await ensureOpencodeInstalled();
 
+// Forward the user's args verbatim — model + provider defaults live
+// in ~/.config/opencode/opencode.jsonc, so we don't inject --model
+// here (doing so caused opencode to fall through to its help screen
+// instead of starting the TUI when invoked with no positional).
 const args = process.argv[2] === "reset" ? process.argv.slice(3) : process.argv.slice(2);
-const child = spawn(opencodeBinaryPath(), [...args, "--model", "tokenharbor/tokenharbor-smart-thinking"], {
+const child = spawn(opencodeBinaryPath(), args, {
   stdio: "inherit",
-  env: { ...process.env, OPENCODE_MODEL: "tokenharbor/tokenharbor-smart-thinking" },
+  env: process.env,
 });
 
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
