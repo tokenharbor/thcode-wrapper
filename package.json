@@ -1,0 +1,25 @@
+{
+  "name": "thcode",
+  "version": "0.1.0-beta.1",
+  "description": "Token Harbor coding agent — opencode wrapped with TH gateway defaults.",
+  "type": "module",
+  "bin": {
+    "thcode": "./bin/thcode.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["ai", "coding", "agent", "cli", "tokenharbor", "opencode"],
+  "homepage": "https://tokenharbor.ai/code",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tokenharbor/thcode-wrapper"
+  },
+  "license": "MIT"
+}
