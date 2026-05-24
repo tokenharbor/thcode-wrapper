@@ -120,9 +120,18 @@ for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 
 child.on("exit", async (code, signal) => {
   // Wait for the inflight update check (cooldown means it usually
-  // resolved already, but make sure we don't miss its notice).
+  // resolved already, but make sure we don't miss its result).
   await updateCheckPromise;
-  if (pendingUpdateNotice) process.stderr.write(pendingUpdateNotice);
+  if (pendingUpdateNotice) {
+    process.stderr.write(pendingUpdateNotice);
+    process.stderr.write("\n  Applying update now…\n");
+    try {
+      await runUpdate({ binaryRefresher: refreshBranded });
+    } catch (err) {
+      process.stderr.write(`\n  Update failed: ${err?.message ?? err}\n`);
+      process.stderr.write(`  Try manually: thcode update\n`);
+    }
+  }
   if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 0);
 });
