@@ -97,19 +97,12 @@ const updateCheckPromise = checkForUpdateAsync({ quiet: true })
   .catch(() => {});
 
 const args = process.argv[2] === "reset" ? process.argv.slice(3) : process.argv.slice(2);
-// Lock the upstream Crush provider machinery off — the binary should
-// only see the `tokenharbor` provider we wrote into the JSON config.
-// `CRUSH_DISABLE_DEFAULT_PROVIDERS` skips the bundled provider catalog;
-// `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE` blocks the live catwalk.charm.land
-// fetch (which would otherwise advertise Anthropic / OpenAI / etc. in
-// the picker).
+// Provider lockdown is enforced via options.disable_default_providers
+// and options.disable_provider_auto_update in the config (see
+// lib/onboard.mjs buildThcodeConfig). Env vars no longer needed.
 const child = spawn(codewhaleBinaryPath(), args, {
   stdio: "inherit",
-  env: {
-    ...process.env,
-    CRUSH_DISABLE_DEFAULT_PROVIDERS: "1",
-    CRUSH_DISABLE_PROVIDER_AUTO_UPDATE: "1",
-  },
+  env: process.env,
 });
 
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
