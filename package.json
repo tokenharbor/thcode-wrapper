@@ -1,6 +1,6 @@
 {
   "name": "thcode",
-  "version": "0.2.1-beta.2",
+  "version": "0.2.2-beta.1",
   "description": "Token Harbor coding agent — codewhale wrapped with TH gateway defaults.",
   "type": "module",
   "bin": {
