@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { codewhaleBinaryPath, ensureCodewhaleInstalled, refreshBranded } from "../lib/install.mjs";
-import { hasTHProvider, runOnboarding } from "../lib/onboard.mjs";
+import { hasTHProvider, refreshFromGateway, runOnboarding } from "../lib/onboard.mjs";
 import { checkForUpdateAsync, runUpdate } from "../lib/update.mjs";
 
 const VERSION = "0.3.0-beta.1";
@@ -66,6 +66,12 @@ const needsOnboard = process.argv[2] === "reset" || !hasTHProvider();
 
 if (needsOnboard) {
   await runOnboarding();
+} else {
+  // Silently refresh the model catalog every launch so new TH models
+  // appear in the picker without requiring `thcode reset`. Also enforces
+  // single-provider lockdown — strips any non-TH providers the user
+  // hand-added. Best-effort: keeps existing config on network failure.
+  await refreshFromGateway();
 }
 
 await ensureCodewhaleInstalled();
@@ -91,9 +97,19 @@ const updateCheckPromise = checkForUpdateAsync({ quiet: true })
   .catch(() => {});
 
 const args = process.argv[2] === "reset" ? process.argv.slice(3) : process.argv.slice(2);
+// Lock the upstream Crush provider machinery off — the binary should
+// only see the `tokenharbor` provider we wrote into the JSON config.
+// `CRUSH_DISABLE_DEFAULT_PROVIDERS` skips the bundled provider catalog;
+// `CRUSH_DISABLE_PROVIDER_AUTO_UPDATE` blocks the live catwalk.charm.land
+// fetch (which would otherwise advertise Anthropic / OpenAI / etc. in
+// the picker).
 const child = spawn(codewhaleBinaryPath(), args, {
   stdio: "inherit",
-  env: process.env,
+  env: {
+    ...process.env,
+    CRUSH_DISABLE_DEFAULT_PROVIDERS: "1",
+    CRUSH_DISABLE_PROVIDER_AUTO_UPDATE: "1",
+  },
 });
 
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
