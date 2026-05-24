@@ -41,12 +41,14 @@ function runQuiet(cmd, args) {
 }
 
 function brandedAssetName() {
+  // Asset names produced by the thcode-crush build workflow.
   if (process.platform === "darwin") {
-    if (process.arch === "arm64") return "thcode-tui-darwin-arm64.tar.gz";
-    if (process.arch === "x64") return "thcode-tui-darwin-x64.tar.gz";
+    if (process.arch === "arm64") return "thcode-darwin-arm64.tar.gz";
+    if (process.arch === "x64") return "thcode-darwin-x64.tar.gz";
   }
   if (process.platform === "linux") {
-    if (process.arch === "x64") return "thcode-tui-linux-x64.tar.gz";
+    if (process.arch === "x64") return "thcode-linux-x64.tar.gz";
+    if (process.arch === "arm64") return "thcode-linux-arm64.tar.gz";
   }
   return null;
 }
@@ -68,13 +70,13 @@ const fail = (msg, hint) => {
     closeLog();
     return;
   }
-  if (existsSync(THCODE_BIN) && existsSync(BINARY_TAG_FILE)) {
-    ok("Binary already on disk");
+  if (existsSync(THCODE_BIN)) {
+    ok("Binary already on disk — preserving local copy");
     closeLog();
     return;
   }
   log(`\n--- postinstall download @ ${new Date().toISOString()} ---\n`);
-  const url = `https://github.com/tokenharbor/thcode-tui/releases/latest/download/${asset}`;
+  const url = `https://github.com/tokenharbor/thcode-crush/releases/latest/download/${asset}`;
   const tarPath = path.join(THCODE_BIN_DIR, asset);
 
   progress(`Downloading thcode-tui (${asset})`);
@@ -117,21 +119,23 @@ const fail = (msg, hint) => {
     closeLog();
     return;
   }
-  // Tarball now ships TWO binaries: `thcode-bin` (the codewhale
-  // dispatcher) and `codewhale-tui` (the interactive companion the
-  // dispatcher exec's). They must live in the same directory.
-  const dispatcher = path.join(THCODE_BIN_DIR, "thcode-bin");
-  const companion = path.join(THCODE_BIN_DIR, "codewhale-tui");
-  const { chmodSync } = await import("node:fs");
-  if (existsSync(dispatcher)) chmodSync(dispatcher, 0o755);
-  if (existsSync(companion)) chmodSync(companion, 0o755);
-  if (!existsSync(dispatcher) || !existsSync(companion)) {
-    fail("Tarball missing expected binaries (thcode-bin + codewhale-tui)", "");
+  // thcode-crush is a single Go binary; tarball contains just `thcode`
+  // (renamed to `thcode-bin` on disk so the wrapper command name
+  // `thcode` stays clean of conflicts on PATH).
+  const { chmodSync, renameSync } = await import("node:fs");
+  const extracted = path.join(THCODE_BIN_DIR, "thcode");
+  if (existsSync(extracted)) {
+    if (existsSync(THCODE_BIN)) spawnSync("rm", ["-f", THCODE_BIN]);
+    renameSync(extracted, THCODE_BIN);
+  }
+  if (!existsSync(THCODE_BIN)) {
+    fail("Tarball missing expected `thcode` binary", "");
     closeLog();
     return;
   }
+  chmodSync(THCODE_BIN, 0o755);
   try {
-    const r = await fetch("https://api.github.com/repos/tokenharbor/thcode-tui/releases/latest");
+    const r = await fetch("https://api.github.com/repos/tokenharbor/thcode-crush/releases/latest");
     if (r.ok) {
       const data = await r.json();
       if (data?.tag_name) {

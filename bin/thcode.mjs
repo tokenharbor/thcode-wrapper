@@ -2,9 +2,11 @@
 /**
  * thcode — Token Harbor coding agent
  *
- * Tiny wrapper that runs codewhale (formerly DeepSeek-TUI) with
- * TH gateway configured as the default provider. First run opens
- * a browser to authenticate and writes ~/.deepseek/config.toml.
+ * Tiny wrapper that runs the thcode binary (a brand fork of
+ * charmbracelet/crush, at github.com/tokenharbor/thcode-crush)
+ * pre-configured with the Token Harbor gateway. First run opens a
+ * browser to authenticate, pulls the live /v1/models catalog, and
+ * writes ~/.config/thcode/thcode.json.
  *
  * Source: https://github.com/tokenharbor/thcode-wrapper
  * License: MIT
@@ -18,7 +20,7 @@ import { codewhaleBinaryPath, ensureCodewhaleInstalled, refreshBranded } from ".
 import { hasTHProvider, runOnboarding } from "../lib/onboard.mjs";
 import { checkForUpdateAsync, runUpdate } from "../lib/update.mjs";
 
-const VERSION = "0.2.2-beta.1";
+const VERSION = "0.3.0-beta.1";
 
 if (process.argv.includes("--version") && process.argv.length === 3) {
   console.log(`thcode ${VERSION}`);
@@ -30,17 +32,17 @@ if (process.argv.includes("--help") && process.argv.length === 3) {
 
 Usage:
   thcode               Start a coding session in the current directory
-  thcode update        Upgrade wrapper + codewhale to latest
+  thcode update        Upgrade wrapper + thcode binary to latest
   thcode reset         Re-run browser login (re-issue API key)
   thcode --version     Print thcode version
   thcode --help        This help
 
-Any other args are forwarded to codewhale. Run \`thcode -- --help\` for codewhale's own help.
+Any other args are forwarded to the thcode binary. Run \`thcode -- --help\` for the binary's own help.
 
 Defaults set by thcode:
   base_url  https://tokenharbor.ai/v1
-  model     tokenharbor-smart-thinking
-  provider  openai-compatible
+  provider  Token Harbor (openai-compat)
+  config    ~/.config/thcode/thcode.json (rewritten on first run)
 
 Get a free thk_live key at https://tokenharbor.ai/dashboard
 `);
@@ -53,11 +55,11 @@ if (process.argv[2] === "update") {
 }
 
 if (process.argv[2] === "reset") {
-  const cfg = path.join(homedir(), ".deepseek", "config.toml");
+  const cfg = path.join(homedir(), ".config", "thcode", "thcode.json");
   if (existsSync(cfg)) {
-    writeFileSync(`${cfg}.thcode-bak`, readFileSync(cfg, "utf8"));
+    writeFileSync(`${cfg}.bak`, readFileSync(cfg, "utf8"));
   }
-  console.log("thcode: previous config backed up to ~/.deepseek/config.toml.thcode-bak. Re-running onboarding…\n");
+  console.log(`thcode: previous config backed up to ${cfg}.bak. Re-running onboarding…\n`);
 }
 
 const needsOnboard = process.argv[2] === "reset" || !hasTHProvider();
