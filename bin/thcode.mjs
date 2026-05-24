@@ -82,10 +82,27 @@ if (needsOnboard) {
 
 await ensureOpencodeInstalled();
 
-// Fire-and-forget update check (24h cooldown). Non-blocking — finishes
-// while opencode boots up, prints a one-line notice to stderr if a
-// newer wrapper or binary is available.
-void checkForUpdateAsync().catch(() => {});
+// Update check runs while opencode boots. The pre-launch stderr line
+// gets cleared by the TUI's full-screen redraw, so we also stash the
+// result and print it again on exit — that one survives in scrollback
+// and is the prompt the user actually sees.
+let pendingUpdateNotice = null;
+const updateCheckPromise = checkForUpdateAsync({ quiet: true })
+  .then((res) => {
+    if (res && (res.wrapperUpdate || res.binaryUpdate)) {
+      const reasons = [];
+      if (res.wrapperUpdate) {
+        reasons.push(`wrapper ${res.currentWrapperSha?.slice(0, 7) ?? "?"} → ${res.latestWrapperSha}`);
+      }
+      if (res.binaryUpdate) {
+        reasons.push(`binary ${res.currentBinaryTag ?? "?"} → ${res.latestBinaryTag}`);
+      }
+      pendingUpdateNotice =
+        `\n  thcode update available: ${reasons.join(", ")}\n` +
+        `  Exit (Ctrl+C / Ctrl+D), then run:  thcode update\n`;
+    }
+  })
+  .catch(() => {});
 
 // Forward the user's args verbatim — model + provider defaults live
 // in ~/.config/opencode/opencode.jsonc, so we don't inject --model
@@ -101,7 +118,11 @@ for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(sig, () => child.kill(sig));
 }
 
-child.on("exit", (code, signal) => {
+child.on("exit", async (code, signal) => {
+  // Wait for the inflight update check (cooldown means it usually
+  // resolved already, but make sure we don't miss its notice).
+  await updateCheckPromise;
+  if (pendingUpdateNotice) process.stderr.write(pendingUpdateNotice);
   if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 0);
 });
