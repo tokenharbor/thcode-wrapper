@@ -18,7 +18,7 @@ import { codewhaleBinaryPath, ensureCodewhaleInstalled, refreshBranded } from ".
 import { hasTHProvider, runOnboarding } from "../lib/onboard.mjs";
 import { checkForUpdateAsync, runUpdate } from "../lib/update.mjs";
 
-const VERSION = "0.2.0-beta.1";
+const VERSION = "0.2.1-beta.2";
 
 if (process.argv.includes("--version") && process.argv.length === 3) {
   console.log(`thcode ${VERSION}`);

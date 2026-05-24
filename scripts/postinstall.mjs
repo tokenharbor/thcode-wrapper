@@ -117,12 +117,18 @@ const fail = (msg, hint) => {
     closeLog();
     return;
   }
-  const extracted = path.join(THCODE_BIN_DIR, "thcode-tui");
-  if (existsSync(extracted)) {
-    const { renameSync, chmodSync } = await import("node:fs");
-    if (existsSync(THCODE_BIN)) spawnSync("rm", ["-f", THCODE_BIN]);
-    renameSync(extracted, THCODE_BIN);
-    chmodSync(THCODE_BIN, 0o755);
+  // Tarball now ships TWO binaries: `thcode-bin` (the codewhale
+  // dispatcher) and `codewhale-tui` (the interactive companion the
+  // dispatcher exec's). They must live in the same directory.
+  const dispatcher = path.join(THCODE_BIN_DIR, "thcode-bin");
+  const companion = path.join(THCODE_BIN_DIR, "codewhale-tui");
+  const { chmodSync } = await import("node:fs");
+  if (existsSync(dispatcher)) chmodSync(dispatcher, 0o755);
+  if (existsSync(companion)) chmodSync(companion, 0o755);
+  if (!existsSync(dispatcher) || !existsSync(companion)) {
+    fail("Tarball missing expected binaries (thcode-bin + codewhale-tui)", "");
+    closeLog();
+    return;
   }
   try {
     const r = await fetch("https://api.github.com/repos/tokenharbor/thcode-tui/releases/latest");
