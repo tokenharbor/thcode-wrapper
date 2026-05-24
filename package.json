@@ -1,6 +1,6 @@
 {
   "name": "thcode",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0-beta.4",
   "description": "Token Harbor coding agent — opencode wrapped with TH gateway defaults.",
   "type": "module",
   "bin": {
@@ -18,9 +18,6 @@
   },
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "oh-my-opencode-slim": "*"
   },
   "keywords": ["ai", "coding", "agent", "cli", "tokenharbor", "opencode"],
   "homepage": "https://tokenharbor.ai/code",
