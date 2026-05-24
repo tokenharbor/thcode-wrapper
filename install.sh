@@ -33,20 +33,46 @@ if [ "$node_major" -lt 18 ]; then
   exit 1
 fi
 
+# Auto-switch to a home-dir npm prefix when /usr/local isn't writable
+# without sudo. Avoids the whole class of EACCES / half-extract /
+# spawn-sh-ENOENT errors from /usr/local/lib/node_modules ownership
+# tangles. Idempotent: re-running just confirms the setting is right.
+npm_prefix=$(npm config get prefix 2>/dev/null || echo "/usr/local")
+nm_dir="${npm_prefix}/lib/node_modules"
+if [ ! -w "${nm_dir}" ] 2>/dev/null && [ ! -w "${npm_prefix}/lib" ] 2>/dev/null; then
+    home_prefix="${HOME}/.npm-global"
+    echo -e "${DIM}${npm_prefix} not writable — switching npm prefix to ${home_prefix} to avoid sudo.${NC}"
+    mkdir -p "${home_prefix}/bin"
+    npm config set prefix "${home_prefix}" >/dev/null 2>&1 || true
+    npm_prefix="${home_prefix}"
+    # Add to PATH for the rest of this shell session and persist for
+    # future shells. zsh + bash both honored.
+    case ":$PATH:" in
+      *":${home_prefix}/bin:"*) : ;;  # already there
+      *) export PATH="${home_prefix}/bin:$PATH" ;;
+    esac
+    for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+        if [ -f "$rc" ] && ! grep -qsF ".npm-global/bin" "$rc"; then
+            printf '\nexport PATH=%s/bin:$PATH\n' "${home_prefix}" >> "$rc"
+        fi
+    done
+fi
+
 # Clean up half-broken install dirs from previous failed attempts.
 # npm doesn't re-extract over a partial install — it tries to spawn
 # the postinstall script in-place and ENOENTs when the working dir
 # is missing files. Re-running install while broken state lingers
 # just re-hits the same error. One-shot cleanup makes the install
 # self-healing.
-npm_prefix=$(npm config get prefix 2>/dev/null || echo "/usr/local")
 thcode_install_dir="${npm_prefix}/lib/node_modules/thcode"
 if [ -d "${thcode_install_dir}" ] && [ ! -f "${thcode_install_dir}/package.json" ]; then
     echo -e "${DIM}Cleaning up half-installed dir at ${thcode_install_dir}…${NC}"
     if [ -w "${npm_prefix}/lib/node_modules" ]; then
         rm -rf "${thcode_install_dir}"
     else
-        sudo rm -rf "${thcode_install_dir}"
+        echo -e "${RED}Cannot remove ${thcode_install_dir} — run this once then re-run install:${NC}"
+        echo "  sudo rm -rf ${thcode_install_dir}"
+        exit 1
     fi
 fi
 # Also clear npm cache entries for the package — broken tarballs
