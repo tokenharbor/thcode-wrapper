@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 /**
- * postinstall — runs at `npm i -g thcode` time, so the branded
- * binary is on disk before the user ever types `thcode`. Saves a
- * 36 MB GitHub download on first launch (the main user complaint
- * for slow-network installs).
+ * postinstall — runs at `npm i -g thcode` time. Goal: zero further
+ * user steps. After this script, `thcode` works end-to-end.
  *
- * Best-effort: any failure here (no network, blocked CDN, unsupported
- * platform) is logged + swallowed. Runtime ensureOpencodeInstalled
- * remains the safety net.
+ * What it does, in order:
+ *   1. Detect platform + download branded thcode binary
+ *   2. Install bun if missing (omo-slim's `install` subcommand
+ *      shebangs `#!/usr/bin/env bun`)
+ *   3. npm i -g oh-my-opencode-slim
+ *   4. bunx oh-my-opencode-slim install   (registers it in
+ *      opencode.jsonc so opencode loads the 6 agents on launch)
  *
- * NPM_CONFIG_IGNORE_SCRIPTS=true bypass is honored — that's how
- * security-conscious users disable postinstalls, and we shouldn't
- * undermine it.
+ * Best-effort: any single step's failure is logged + swallowed. The
+ * runtime ensureOpencodeInstalled + ensureOmoInstalled stay as
+ * safety nets so a half-failing postinstall doesn't brick `thcode`.
+ *
+ * NPM_CONFIG_IGNORE_SCRIPTS=true bypass is honored.
  */
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -39,7 +43,7 @@ function which(cmd) {
   return (r.stdout || "").split(/\r?\n/).find((l) => l.trim())?.trim() ?? null;
 }
 
-(async () => {
+async function downloadBranded() {
   const asset = brandedAssetName();
   if (!asset) {
     // Unsupported platform — runtime falls back to upstream opencode.
@@ -118,5 +122,68 @@ function which(cmd) {
     process.stderr.write(`thcode: binary ready at ${THCODE_BIN} (${(statSync(THCODE_BIN).size / 1024 / 1024).toFixed(1)} MB)\n\n`);
   } catch (err) {
     process.stderr.write("thcode: prefetch error: " + (err?.message ?? err) + " — first launch will retry.\n");
+  }
+}
+
+async function ensureBun() {
+  if (which("bun")) return true;
+  const bunHome = path.join(homedir(), ".bun", "bin");
+  const bunPath = path.join(bunHome, "bun");
+  if (existsSync(bunPath)) {
+    process.env.PATH = `${bunHome}:${process.env.PATH ?? ""}`;
+    return true;
+  }
+  if (process.platform === "win32") {
+    process.stderr.write("thcode: bun isn't installed; omo-slim install will be skipped on Windows.\n");
+    return false;
+  }
+  process.stderr.write("\nthcode: installing bun (required by omo-slim's install command)…\n");
+  const r = spawnSync(
+    "bash",
+    ["-c", "curl -fsSL https://bun.sh/install | bash"],
+    { stdio: "inherit" },
+  );
+  if (r.status !== 0 || !existsSync(bunPath)) {
+    process.stderr.write("thcode: bun install failed; omo-slim plugin will not be set up.\n");
+    return false;
+  }
+  process.env.PATH = `${bunHome}:${process.env.PATH ?? ""}`;
+  return true;
+}
+
+async function installOmoSlim() {
+  const haveOmo = which("oh-my-opencode-slim");
+  if (!haveOmo) {
+    process.stderr.write("\nthcode: installing omo-slim (oh-my-opencode-slim)…\n");
+    const r = spawnSync(
+      "npm",
+      ["i", "-g", "oh-my-opencode-slim"],
+      { stdio: "inherit" },
+    );
+    if (r.status !== 0) {
+      process.stderr.write("thcode: omo-slim npm install failed; first thcode launch will retry.\n");
+      return false;
+    }
+  }
+  // Run the install subcommand. omo-slim's bin shebangs `#!/usr/bin/env bun`,
+  // so this fails without bun in PATH (postinstall's ensureBun step
+  // takes care of that).
+  process.stderr.write("\nthcode: registering omo-slim with opencode…\n");
+  const omoBin = which("oh-my-opencode-slim") ?? "oh-my-opencode-slim";
+  const r = spawnSync(omoBin, ["install"], { stdio: "inherit" });
+  if (r.status !== 0) {
+    process.stderr.write("thcode: omo-slim install subcommand failed; first thcode launch will retry.\n");
+    return false;
+  }
+  return true;
+}
+
+(async () => {
+  await downloadBranded();
+  try {
+    const haveBun = await ensureBun();
+    if (haveBun) await installOmoSlim();
+  } catch (err) {
+    process.stderr.write("thcode: bun/omo setup error: " + (err?.message ?? err) + " — first launch will retry.\n");
   }
 })();
