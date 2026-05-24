@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { ensureOpencodeInstalled, opencodeBinaryPath, refreshBranded } from "../lib/install.mjs";
-import { runOnboarding } from "../lib/onboard.mjs";
+import { ensureOmoInstalled, runOnboarding } from "../lib/onboard.mjs";
 import { checkForUpdateAsync, runUpdate } from "../lib/update.mjs";
 
 const VERSION = "0.1.0-beta.1";
@@ -81,6 +81,7 @@ if (needsOnboard) {
 }
 
 await ensureOpencodeInstalled();
+await ensureOmoInstalled();
 
 // Update check runs while opencode boots. The pre-launch stderr line
 // gets cleared by the TUI's full-screen redraw, so we also stash the
