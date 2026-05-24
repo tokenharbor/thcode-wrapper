@@ -3,28 +3,100 @@
  * postinstall — runs at `npm i -g thcode` time. Goal: zero further
  * user steps. After this script, `thcode` works end-to-end.
  *
- * What it does, in order:
- *   1. Detect platform + download branded thcode binary
- *   2. Install bun if missing (omo-slim's `install` subcommand
- *      shebangs `#!/usr/bin/env bun`)
- *   3. npm i -g oh-my-opencode-slim
- *   4. bunx oh-my-opencode-slim install   (registers it in
- *      opencode.jsonc so opencode loads the 6 agents on launch)
+ * Output style: single-line progress per step. Verbose third-party
+ * output (bun installer ASCII art, omo-slim's 9-step log, skills
+ * installer banners) is captured to ~/.thcode/install.log and only
+ * shown on failure.
  *
- * Best-effort: any single step's failure is logged + swallowed. The
- * runtime ensureOpencodeInstalled + ensureOmoInstalled stay as
- * safety nets so a half-failing postinstall doesn't brick `thcode`.
+ * Steps:
+ *   1. Download branded thcode binary
+ *   2. Install bun if missing
+ *   3. npm i -g oh-my-opencode-slim
+ *   4. oh-my-opencode-slim install
  *
  * NPM_CONFIG_IGNORE_SCRIPTS=true bypass is honored.
  */
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync, statSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const THCODE_DIR = path.join(homedir(), ".thcode", "bin");
+const THCODE_HOME = path.join(homedir(), ".thcode");
+const THCODE_DIR = path.join(THCODE_HOME, "bin");
 const THCODE_BIN = path.join(THCODE_DIR, "thcode-bin");
-const BINARY_TAG_FILE = path.join(homedir(), ".thcode", "binary-tag");
+const BINARY_TAG_FILE = path.join(THCODE_HOME, "binary-tag");
+const LOG_FILE = path.join(THCODE_HOME, "install.log");
+
+mkdirSync(THCODE_HOME, { recursive: true });
+
+// Open log fd that every step appends to. tail of this is shown on
+// any step failure so the user can diagnose without us having to
+// pipe through every third-party tool's stdout.
+let logFd = (() => {
+  try {
+    return openSync(LOG_FILE, "a");
+  } catch {
+    return null;
+  }
+})();
+function closeLog() {
+  if (logFd !== null) {
+    try { closeSync(logFd); } catch {}
+    logFd = null;
+  }
+}
+function logHeader(step, total, msg) {
+  const stamp = `\n--- [${step}/${total}] ${msg} @ ${new Date().toISOString()} ---\n`;
+  if (logFd !== null) {
+    try {
+      const { writeSync } = require("node:fs");
+      writeSync(logFd, stamp);
+    } catch {}
+  }
+}
+function tailLog(lines = 60) {
+  try {
+    const text = readFileSync(LOG_FILE, "utf8");
+    const arr = text.split(/\r?\n/);
+    return arr.slice(Math.max(0, arr.length - lines)).join("\n");
+  } catch {
+    return "(log unavailable)";
+  }
+}
+
+const TOTAL = 4;
+const progress = (n, msg) => {
+  process.stderr.write(`[${n}/${TOTAL}] ${msg}…\n`);
+  logHeader(n, TOTAL, msg);
+};
+const ok = (n, msg) => {
+  process.stderr.write(`[${n}/${TOTAL}] ${msg} ✓\n`);
+};
+const fail = (n, msg, hint) => {
+  process.stderr.write(`[${n}/${TOTAL}] ${msg} ✗\n`);
+  if (hint) process.stderr.write(`     ${hint}\n`);
+  process.stderr.write(`     See ${LOG_FILE} for details (last 60 lines):\n`);
+  for (const line of tailLog().split(/\r?\n/).slice(-30)) {
+    process.stderr.write(`     ${line}\n`);
+  }
+};
+
+function runQuiet(cmd, args) {
+  if (logFd === null) {
+    return spawnSync(cmd, args, { stdio: "ignore" });
+  }
+  return spawnSync(cmd, args, {
+    stdio: ["ignore", logFd, logFd],
+  });
+}
+function runQuietBash(script) {
+  if (logFd === null) {
+    return spawnSync("bash", ["-c", script], { stdio: "ignore" });
+  }
+  return spawnSync("bash", ["-c", script], {
+    stdio: ["ignore", logFd, logFd],
+  });
+}
 
 function brandedAssetName() {
   if (process.platform === "darwin") {
@@ -43,47 +115,40 @@ function which(cmd) {
   return (r.stdout || "").split(/\r?\n/).find((l) => l.trim())?.trim() ?? null;
 }
 
-async function downloadBranded() {
+async function step1_downloadBranded() {
   const asset = brandedAssetName();
   if (!asset) {
-    // Unsupported platform — runtime falls back to upstream opencode.
+    process.stderr.write(`[1/${TOTAL}] Unsupported platform — runtime will fall back to upstream opencode\n`);
     return;
   }
   if (existsSync(THCODE_BIN) && existsSync(BINARY_TAG_FILE)) {
-    // Already downloaded on a previous install — skip.
+    process.stderr.write(`[1/${TOTAL}] Branded binary already on disk ✓\n`);
     return;
   }
+  progress(1, `Downloading thcode binary (${asset})`);
   try {
     mkdirSync(THCODE_DIR, { recursive: true });
     const url = `https://github.com/tokenharbor/thcode/releases/latest/download/${asset}`;
     const tarPath = path.join(THCODE_DIR, asset);
-
-    process.stderr.write(`\nthcode: prefetching binary (${asset})…\n  ${url}\n`);
-
     const curl = which("curl");
     if (curl) {
-      const r = spawnSync(
-        "curl",
-        [
-          "-fsSL",
-          "--retry", "5",
-          "--retry-delay", "2",
-          "--retry-all-errors",
-          "--connect-timeout", "20",
-          "-o", tarPath,
-          url,
-        ],
-        { stdio: "inherit" },
-      );
+      const r = runQuiet("curl", [
+        "-fsSL",
+        "--retry", "5",
+        "--retry-delay", "2",
+        "--retry-all-errors",
+        "--connect-timeout", "20",
+        "-o", tarPath,
+        url,
+      ]);
       if (r.status !== 0) {
-        process.stderr.write("thcode: prefetch failed (curl exit " + r.status + "). First `thcode` run will retry.\n");
+        fail(1, "Download failed", "First `thcode` run will retry over the network.");
         return;
       }
     } else {
-      // Node fetch fallback — Windows often lacks curl
       const res = await fetch(url, { redirect: "follow" });
       if (!res.ok) {
-        process.stderr.write(`thcode: prefetch failed (HTTP ${res.status}). First \`thcode\` run will retry.\n`);
+        fail(1, `Download failed (HTTP ${res.status})`, "First `thcode` run will retry.");
         return;
       }
       const { createWriteStream } = await import("node:fs");
@@ -91,24 +156,20 @@ async function downloadBranded() {
       const { Readable } = await import("node:stream");
       await pipeline(Readable.fromWeb(res.body), createWriteStream(tarPath));
     }
-
-    const tar = spawnSync("tar", ["-xzf", tarPath, "-C", THCODE_DIR], { stdio: "inherit" });
+    const tar = runQuiet("tar", ["-xzf", tarPath, "-C", THCODE_DIR]);
     if (tar.status !== 0) {
-      process.stderr.write("thcode: tar extract failed. First `thcode` run will retry.\n");
+      fail(1, "Extract failed", "First `thcode` run will retry.");
       return;
     }
-    // Rename thcode → thcode-bin so the wrapper's bin name (thcode)
-    // doesn't collide with the inner binary.
     const extracted = path.join(THCODE_DIR, "thcode");
     if (existsSync(extracted)) {
       const { renameSync, chmodSync } = await import("node:fs");
       if (existsSync(THCODE_BIN)) {
-        spawnSync("rm", ["-f", THCODE_BIN]);
+        runQuiet("rm", ["-f", THCODE_BIN]);
       }
       renameSync(extracted, THCODE_BIN);
       chmodSync(THCODE_BIN, 0o755);
     }
-    // Stamp the release tag so the update checker has a baseline.
     try {
       const r = await fetch("https://api.github.com/repos/tokenharbor/thcode/releases/latest");
       if (r.ok) {
@@ -119,71 +180,83 @@ async function downloadBranded() {
         }
       }
     } catch {}
-    process.stderr.write(`thcode: binary ready at ${THCODE_BIN} (${(statSync(THCODE_BIN).size / 1024 / 1024).toFixed(1)} MB)\n\n`);
+    ok(1, `thcode binary ready (${(statSync(THCODE_BIN).size / 1024 / 1024).toFixed(1)} MB)`);
   } catch (err) {
-    process.stderr.write("thcode: prefetch error: " + (err?.message ?? err) + " — first launch will retry.\n");
+    fail(1, "Download error: " + (err?.message ?? err), "First `thcode` run will retry.");
   }
 }
 
-async function ensureBun() {
-  if (which("bun")) return true;
+async function step2_ensureBun() {
+  if (which("bun")) {
+    ok(2, "bun already installed");
+    return true;
+  }
   const bunHome = path.join(homedir(), ".bun", "bin");
   const bunPath = path.join(bunHome, "bun");
   if (existsSync(bunPath)) {
     process.env.PATH = `${bunHome}:${process.env.PATH ?? ""}`;
+    ok(2, "bun already installed");
     return true;
   }
   if (process.platform === "win32") {
-    process.stderr.write("thcode: bun isn't installed; omo-slim install will be skipped on Windows.\n");
+    fail(2, "bun isn't installed", "Windows: install bun from https://bun.sh, then run `thcode reset`.");
     return false;
   }
-  process.stderr.write("\nthcode: installing bun (required by omo-slim's install command)…\n");
-  const r = spawnSync(
-    "bash",
-    ["-c", "curl -fsSL https://bun.sh/install | bash"],
-    { stdio: "inherit" },
-  );
+  progress(2, "Installing bun (required by omo-slim)");
+  const r = runQuietBash("curl -fsSL https://bun.sh/install | bash");
   if (r.status !== 0 || !existsSync(bunPath)) {
-    process.stderr.write("thcode: bun install failed; omo-slim plugin will not be set up.\n");
+    fail(2, "bun install failed", "omo-slim plugin will be skipped. Re-run later with `thcode reset`.");
     return false;
   }
   process.env.PATH = `${bunHome}:${process.env.PATH ?? ""}`;
+  ok(2, "bun installed");
   return true;
 }
 
-async function installOmoSlim() {
-  const haveOmo = which("oh-my-opencode-slim");
-  if (!haveOmo) {
-    process.stderr.write("\nthcode: installing omo-slim (oh-my-opencode-slim)…\n");
-    const r = spawnSync(
-      "npm",
-      ["i", "-g", "oh-my-opencode-slim"],
-      { stdio: "inherit" },
-    );
-    if (r.status !== 0) {
-      process.stderr.write("thcode: omo-slim npm install failed; first thcode launch will retry.\n");
-      return false;
-    }
+async function step3_installOmoSlim() {
+  if (which("oh-my-opencode-slim")) {
+    ok(3, "oh-my-opencode-slim already installed");
+    return true;
   }
-  // Run the install subcommand. omo-slim's bin shebangs `#!/usr/bin/env bun`,
-  // so this fails without bun in PATH (postinstall's ensureBun step
-  // takes care of that).
-  process.stderr.write("\nthcode: registering omo-slim with opencode…\n");
-  const omoBin = which("oh-my-opencode-slim") ?? "oh-my-opencode-slim";
-  const r = spawnSync(omoBin, ["install"], { stdio: "inherit" });
+  progress(3, "Installing oh-my-opencode-slim");
+  const r = runQuiet("npm", ["i", "-g", "oh-my-opencode-slim"]);
   if (r.status !== 0) {
-    process.stderr.write("thcode: omo-slim install subcommand failed; first thcode launch will retry.\n");
+    fail(3, "npm i -g oh-my-opencode-slim failed", "First `thcode` run will retry.");
     return false;
   }
+  ok(3, "oh-my-opencode-slim installed");
+  return true;
+}
+
+async function step4_registerOmo() {
+  progress(4, "Configuring agents (orchestrator / oracle / designer / explorer / librarian / fixer)");
+  const omoBin = which("oh-my-opencode-slim") ?? "oh-my-opencode-slim";
+  const r = runQuiet(omoBin, ["install"]);
+  if (r.status !== 0) {
+    fail(4, "omo-slim install subcommand failed", "First `thcode` run will retry.");
+    return false;
+  }
+  ok(4, "agents configured");
   return true;
 }
 
 (async () => {
-  await downloadBranded();
+  process.stderr.write("\nthcode setup\n");
+  await step1_downloadBranded();
+  let haveBun = false;
   try {
-    const haveBun = await ensureBun();
-    if (haveBun) await installOmoSlim();
+    haveBun = await step2_ensureBun();
   } catch (err) {
-    process.stderr.write("thcode: bun/omo setup error: " + (err?.message ?? err) + " — first launch will retry.\n");
+    fail(2, "bun setup error: " + (err?.message ?? err), "First `thcode` run will retry.");
   }
+  if (haveBun) {
+    try {
+      const okOmo = await step3_installOmoSlim();
+      if (okOmo) await step4_registerOmo();
+    } catch (err) {
+      fail(3, "omo setup error: " + (err?.message ?? err), "First `thcode` run will retry.");
+    }
+  }
+  closeLog();
+  process.stderr.write("\nDone. Run `thcode` to start.\n\n");
 })();
