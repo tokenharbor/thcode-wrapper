@@ -1,7 +1,7 @@
 {
   "name": "thcode",
-  "version": "0.1.0-beta.4",
-  "description": "Token Harbor coding agent — opencode wrapped with TH gateway defaults.",
+  "version": "0.2.0-beta.1",
+  "description": "Token Harbor coding agent — codewhale wrapped with TH gateway defaults.",
   "type": "module",
   "bin": {
     "thcode": "./bin/thcode.mjs"
@@ -19,7 +19,7 @@
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["ai", "coding", "agent", "cli", "tokenharbor", "opencode"],
+  "keywords": ["ai", "coding", "agent", "cli", "tokenharbor", "codewhale"],
   "homepage": "https://tokenharbor.ai/code",
   "repository": {
     "type": "git",

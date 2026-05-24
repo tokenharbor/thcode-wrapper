@@ -2,33 +2,23 @@
 /**
  * thcode — Token Harbor coding agent
  *
- * Tiny wrapper that runs `opencode` (https://github.com/anomalyco/opencode)
- * with TH gateway configured as the default provider. On first run, asks
- * the user for their thk_live_ API key and writes opencode config so the
- * key, baseURL, and default model are all set.
+ * Tiny wrapper that runs codewhale (formerly DeepSeek-TUI) with
+ * TH gateway configured as the default provider. First run opens
+ * a browser to authenticate and writes ~/.deepseek/config.toml.
  *
  * Source: https://github.com/tokenharbor/thcode-wrapper
  * License: MIT
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import readline from "node:readline";
-import { ensureOpencodeInstalled, opencodeBinaryPath, refreshBranded } from "../lib/install.mjs";
-import { ensureOmoInstalled, runOnboarding } from "../lib/onboard.mjs";
+
+import { codewhaleBinaryPath, ensureCodewhaleInstalled, refreshBranded } from "../lib/install.mjs";
+import { hasTHProvider, runOnboarding } from "../lib/onboard.mjs";
 import { checkForUpdateAsync, runUpdate } from "../lib/update.mjs";
 
-const VERSION = "0.1.0-beta.1";
-
-function xdg(name, fallback) {
-  return process.env[name] || path.join(homedir(), fallback);
-}
-
-const CONFIG_DIR = path.join(xdg("XDG_CONFIG_HOME", ".config"), "opencode");
-const DATA_DIR = path.join(xdg("XDG_DATA_HOME", ".local/share"), "opencode");
-const CONFIG_FILE = path.join(CONFIG_DIR, "opencode.jsonc");
-const AUTH_FILE = path.join(DATA_DIR, "auth.json");
+const VERSION = "0.2.0-beta.1";
 
 if (process.argv.includes("--version") && process.argv.length === 3) {
   console.log(`thcode ${VERSION}`);
@@ -40,21 +30,19 @@ if (process.argv.includes("--help") && process.argv.length === 3) {
 
 Usage:
   thcode               Start a coding session in the current directory
-  thcode update        Upgrade wrapper + branded binary to the latest
-  thcode reset         Re-run onboarding (re-enter your thk_live key)
+  thcode update        Upgrade wrapper + codewhale to latest
+  thcode reset         Re-run browser login (re-issue API key)
   thcode --version     Print thcode version
   thcode --help        This help
 
-Any other args are forwarded to opencode. Run \`thcode -- --help\` for opencode's own help.
+Any other args are forwarded to codewhale. Run \`thcode -- --help\` for codewhale's own help.
 
 Defaults set by thcode:
-  baseURL  https://tokenharbor.ai/v1
-  model    tokenharbor-smart-thinking
+  base_url  https://tokenharbor.ai/v1
+  model     tokenharbor-smart-thinking
+  provider  openai-compatible
 
 Get a free thk_live key at https://tokenharbor.ai/dashboard
-
-thcode checks for updates once per 24h and prints a notice in your terminal
-when a newer version is available. Use \`thcode update\` to apply it.
 `);
   process.exit(0);
 }
@@ -65,28 +53,23 @@ if (process.argv[2] === "update") {
 }
 
 if (process.argv[2] === "reset") {
-  for (const p of [CONFIG_FILE, AUTH_FILE]) {
-    if (existsSync(p)) {
-      const copy = readFileSync(p, "utf8");
-      writeFileSync(`${p}.thcode-bak`, copy);
-    }
+  const cfg = path.join(homedir(), ".deepseek", "config.toml");
+  if (existsSync(cfg)) {
+    writeFileSync(`${cfg}.thcode-bak`, readFileSync(cfg, "utf8"));
   }
-  console.log("thcode: previous config backed up (.thcode-bak). Re-running onboarding…\n");
+  console.log("thcode: previous config backed up to ~/.deepseek/config.toml.thcode-bak. Re-running onboarding…\n");
 }
 
 const needsOnboard = process.argv[2] === "reset" || !hasTHProvider();
 
 if (needsOnboard) {
-  await runOnboarding({ configDir: CONFIG_DIR, dataDir: DATA_DIR, configFile: CONFIG_FILE, authFile: AUTH_FILE });
+  await runOnboarding();
 }
 
-await ensureOpencodeInstalled();
-await ensureOmoInstalled();
+await ensureCodewhaleInstalled();
 
-// Update check runs while opencode boots. The pre-launch stderr line
-// gets cleared by the TUI's full-screen redraw, so we also stash the
-// result and print it again on exit — that one survives in scrollback
-// and is the prompt the user actually sees.
+// Update check runs while codewhale boots. Stash the result for
+// the on-exit notice (TUI usually clears the pre-launch message).
 let pendingUpdateNotice = null;
 const updateCheckPromise = checkForUpdateAsync({ quiet: true })
   .then((res) => {
@@ -96,21 +79,17 @@ const updateCheckPromise = checkForUpdateAsync({ quiet: true })
         reasons.push(`wrapper ${res.currentWrapperSha?.slice(0, 7) ?? "?"} → ${res.latestWrapperSha}`);
       }
       if (res.binaryUpdate) {
-        reasons.push(`binary ${res.currentBinaryTag ?? "?"} → ${res.latestBinaryTag}`);
+        reasons.push(`codewhale ${res.currentBinaryTag ?? "?"} → ${res.latestBinaryTag}`);
       }
       pendingUpdateNotice =
         `\n  thcode update available: ${reasons.join(", ")}\n` +
-        `  Exit (Ctrl+C / Ctrl+D), then run:  thcode update\n`;
+        `  Exit, then run:  thcode update\n`;
     }
   })
   .catch(() => {});
 
-// Forward the user's args verbatim — model + provider defaults live
-// in ~/.config/opencode/opencode.jsonc, so we don't inject --model
-// here (doing so caused opencode to fall through to its help screen
-// instead of starting the TUI when invoked with no positional).
 const args = process.argv[2] === "reset" ? process.argv.slice(3) : process.argv.slice(2);
-const child = spawn(opencodeBinaryPath(), args, {
+const child = spawn(codewhaleBinaryPath(), args, {
   stdio: "inherit",
   env: process.env,
 });
@@ -120,8 +99,6 @@ for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 }
 
 child.on("exit", async (code, signal) => {
-  // Wait for the inflight update check (cooldown means it usually
-  // resolved already, but make sure we don't miss its result).
   await updateCheckPromise;
   if (pendingUpdateNotice) {
     process.stderr.write(pendingUpdateNotice);
@@ -136,15 +113,3 @@ child.on("exit", async (code, signal) => {
   if (signal) process.kill(process.pid, signal);
   else process.exit(code ?? 0);
 });
-
-function hasTHProvider() {
-  if (!existsSync(AUTH_FILE) || !existsSync(CONFIG_FILE)) return false;
-  try {
-    const auth = JSON.parse(readFileSync(AUTH_FILE, "utf8"));
-    if (!auth || !auth.tokenharbor || auth.tokenharbor.type !== "api") return false;
-    const cfg = readFileSync(CONFIG_FILE, "utf8");
-    return cfg.includes("\"tokenharbor\"") || cfg.includes("tokenharbor.ai/v1");
-  } catch {
-    return false;
-  }
-}
