@@ -33,6 +33,27 @@ if [ "$node_major" -lt 18 ]; then
   exit 1
 fi
 
+# Clean up half-broken install dirs from previous failed attempts.
+# npm doesn't re-extract over a partial install — it tries to spawn
+# the postinstall script in-place and ENOENTs when the working dir
+# is missing files. Re-running install while broken state lingers
+# just re-hits the same error. One-shot cleanup makes the install
+# self-healing.
+npm_prefix=$(npm config get prefix 2>/dev/null || echo "/usr/local")
+thcode_install_dir="${npm_prefix}/lib/node_modules/thcode"
+if [ -d "${thcode_install_dir}" ] && [ ! -f "${thcode_install_dir}/package.json" ]; then
+    echo -e "${DIM}Cleaning up half-installed dir at ${thcode_install_dir}…${NC}"
+    if [ -w "${npm_prefix}/lib/node_modules" ]; then
+        rm -rf "${thcode_install_dir}"
+    else
+        sudo rm -rf "${thcode_install_dir}"
+    fi
+fi
+# Also clear npm cache entries for the package — broken tarballs
+# from upstream dep churn (e.g. effect@4.0.0 missing src/dist in
+# the 2026-05-24 publish) otherwise stay cached and re-fail.
+npm cache clean --force >/dev/null 2>&1 || true
+
 echo "Installing thcode globally via npm (from github:tokenharbor/thcode-wrapper)…"
 echo
 
