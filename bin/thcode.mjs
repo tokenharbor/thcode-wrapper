@@ -15,8 +15,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { ensureOpencodeInstalled, opencodeBinaryPath } from "../lib/install.mjs";
+import { ensureOpencodeInstalled, opencodeBinaryPath, refreshBranded } from "../lib/install.mjs";
 import { runOnboarding } from "../lib/onboard.mjs";
+import { checkForUpdateAsync, runUpdate } from "../lib/update.mjs";
 
 const VERSION = "0.1.0-beta.1";
 
@@ -39,6 +40,7 @@ if (process.argv.includes("--help") && process.argv.length === 3) {
 
 Usage:
   thcode               Start a coding session in the current directory
+  thcode update        Upgrade wrapper + branded binary to the latest
   thcode reset         Re-run onboarding (re-enter your thk_live key)
   thcode --version     Print thcode version
   thcode --help        This help
@@ -50,7 +52,15 @@ Defaults set by thcode:
   model    tokenharbor-smart-thinking
 
 Get a free thk_live key at https://tokenharbor.ai/dashboard
+
+thcode checks for updates once per 24h and prints a notice in your terminal
+when a newer version is available. Use \`thcode update\` to apply it.
 `);
+  process.exit(0);
+}
+
+if (process.argv[2] === "update") {
+  await runUpdate({ binaryRefresher: refreshBranded });
   process.exit(0);
 }
 
@@ -71,6 +81,11 @@ if (needsOnboard) {
 }
 
 await ensureOpencodeInstalled();
+
+// Fire-and-forget update check (24h cooldown). Non-blocking — finishes
+// while opencode boots up, prints a one-line notice to stderr if a
+// newer wrapper or binary is available.
+void checkForUpdateAsync().catch(() => {});
 
 // Forward the user's args verbatim — model + provider defaults live
 // in ~/.config/opencode/opencode.jsonc, so we don't inject --model

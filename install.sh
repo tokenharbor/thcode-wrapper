@@ -37,6 +37,18 @@ echo "Installing thcode globally via npm (from github:tokenharbor/thcode-wrapper
 echo
 
 if npm i -g github:tokenharbor/thcode-wrapper; then
+  # Stamp the installed wrapper SHA so the in-process update checker
+  # can later tell when GitHub is ahead of the user's local copy.
+  if command -v curl >/dev/null 2>&1; then
+    sha=$(curl -fsSL "https://api.github.com/repos/tokenharbor/thcode-wrapper/commits/main" 2>/dev/null \
+          | grep -m1 '"sha"' \
+          | head -1 \
+          | sed -E 's/.*"sha": *"([^"]+)".*/\1/')
+    if [ -n "${sha:-}" ]; then
+      mkdir -p "$HOME/.thcode"
+      printf '%s' "$sha" > "$HOME/.thcode/wrapper-sha"
+    fi
+  fi
   echo
   echo -e "${GREEN}Installed.${NC}  Try it:"
   echo
