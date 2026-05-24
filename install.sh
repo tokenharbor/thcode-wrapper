@@ -80,10 +80,38 @@ fi
 # the 2026-05-24 publish) otherwise stay cached and re-fail.
 npm cache clean --force >/dev/null 2>&1 || true
 
-echo "Installing thcode globally via npm (from github:tokenharbor/thcode-wrapper)…"
+echo "Installing thcode globally via npm…"
 echo
 
-if npm i -g github:tokenharbor/thcode-wrapper; then
+# Method: download the wrapper tarball directly + `npm i -g .` on
+# the extracted dir. AVOIDS `npm i -g github:...` which is broken on
+# Node 25 (npm's github-clone path spawn-sh-ENOENTs mid-install) and
+# also pulls more reliably through corporate proxies that allow
+# codeload.github.com but block the raw github clone protocol.
+work_dir="${TMPDIR:-/tmp}/thcode-install-$$"
+mkdir -p "${work_dir}"
+trap "rm -rf '${work_dir}'" EXIT
+tarball="${work_dir}/thcode-wrapper.tar.gz"
+
+if ! curl -fsSL --retry 3 --retry-delay 2 \
+        "https://codeload.github.com/tokenharbor/thcode-wrapper/tar.gz/refs/heads/main" \
+        -o "${tarball}"; then
+    echo -e "${RED}Failed to download wrapper tarball.${NC} Check your network or try again later."
+    exit 1
+fi
+
+if ! tar -xzf "${tarball}" -C "${work_dir}"; then
+    echo -e "${RED}Failed to extract wrapper tarball.${NC}"
+    exit 1
+fi
+
+extracted_dir="${work_dir}/thcode-wrapper-main"
+if [ ! -f "${extracted_dir}/package.json" ]; then
+    echo -e "${RED}Extracted tarball is missing package.json.${NC}"
+    exit 1
+fi
+
+if (cd "${extracted_dir}" && npm i -g .); then
   # Stamp the installed wrapper SHA so the in-process update checker
   # can later tell when GitHub is ahead of the user's local copy.
   if command -v curl >/dev/null 2>&1; then
